@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Valuation - Raw Values & Dual Axis</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; margin: 24px; background: #0f172a; color: #f8fafc; }
+        .controls { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
+        input, select, button { padding: 10px 14px; border-radius: 6px; border: 1px solid #334155; background: #1e293b; color: #fff; font-size: 14px; }
+        button { background: #2563eb; cursor: pointer; border: none; font-weight: 600; }
+        button:hover { background: #1d4ed8; }
+        #chart { width: 100%; height: 680px; background: #1e293b; border-radius: 8px; padding: 10px; box-sizing: border-box; }
+        .hint { font-size: 13px; color: #94a3b8; margin-top: 5px; }
+    </style>
+</head>
+<body>
+
+    <h2>Stock Valuation (True Values & Dual Axis)</h2>
+    <div class="controls">
+        <input type="text" id="tickerInput" placeholder="Ticker (e.g. AAPL, SHOP.TO)" value="AAPL">
+        <select id="periodSelect">
+            <option value="1y">1 Year</option>
+            <option value="2y">2 Years</option>
+            <option value="5y" selected>5 Years</option>
+            <option value="10y">10 Years</option>
+        </select>
+        <button onclick="fetchAndPlot()">Plot True Values</button>
+    </div>
+    <div class="hint">Left axis tracks actual Stock Price ($). Right axis tracks true P/E and P/FCF valuation multiples.</div>
+    <br>
+
+    <div id="chart"></div>
+
+    <script>
+        async function fetchAndPlot() {
+            const ticker = document.getElementById('tickerInput').value.trim();
+            const period = document.getElementById('periodSelect').value;
+            
+            if (!ticker) {
+                alert("Please enter a valid stock ticker.");
+                return;
+            }
+
+            try {
+                const response = await fetch(`http://127.0.0.1:8000/api/stock/${ticker}?period=${period}`);
+                if (!response.ok) throw new Error("Ticker not found or backend error.");
+                
+                const data = await response.json();
+                
+                const tracePrice = {
+                    x: data.dates,
+                    y: data.price,
+                    name: 'Stock Price ($)',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: '#38bdf8', width: 2 },
+                    yaxis: 'y1',
+                    hovertemplate: 'Price: $%{y:.2f}<extra></extra>'
+                };
+
+                const tracePE = {
+                    x: data.dates,
+                    y: data.pe,
+                    name: 'P/E Ratio',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: '#f59e0b', width: 2 },
+                    yaxis: 'y2',
+                    hovertemplate: 'P/E: %{y:.1f}x<extra></extra>'
+                };
+
+                const tracePFCF = {
+                    x: data.dates,
+                    y: data.pfcf,
+                    name: 'P/FCF Ratio',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: '#10b981', width: 2 },
+                    yaxis: 'y2',
+                    hovertemplate: 'P/FCF: %{y:.1f}x<extra></extra>'
+                };
+
+                const layout = {
+                    paper_bgcolor: '#1e293b',
+                    plot_bgcolor: '#1e293b',
+                    title: { text: `${ticker.toUpperCase()} True Multiples & Price (${period.toUpperCase()})`, font: { color: '#f8fafc', size: 18 } },
+                    xaxis: { color: '#94a3b8', gridcolor: '#334155', title: 'Date' },
+                    yaxis: { 
+                        title: 'Stock Price ($)', 
+                        titlefont: { color: '#38bdf8' }, 
+                        tickfont: { color: '#38bdf8' }, 
+                        gridcolor: '#334155',
+                        side: 'left'
+                    },
+                    yaxis2: { 
+                        title: 'Valuation Multiple (Ratio)', 
+                        titlefont: { color: '#f59e0b' }, 
+                        tickfont: { color: '#f59e0b' }, 
+                        overlaying: 'y', 
+                        side: 'right',
+                        showgrid: false
+                    },
+                    legend: { font: { color: '#f8fafc' }, x: 0.05, y: 1.1, orientation: 'h' },
+                    shapes: [
+                        {
+                            type: 'line',
+                            x0: data.dates[0],
+                            x1: data.dates[data.dates.length - 1],
+                            y0: data.pe_median,
+                            y1: data.pe_median,
+                            yaxis: 'y2',
+                            line: { color: '#f59e0b', width: 1.5, dash: 'dash' }
+                        },
+                        {
+                            type: 'line',
+                            x0: data.dates[0],
+                            x1: data.dates[data.dates.length - 1],
+                            y0: data.pfcf_median,
+                            y1: data.pfcf_median,
+                            yaxis: 'y2',
+                            line: { color: '#10b981', width: 1.5, dash: 'dash' }
+                        }
+                    ],
+                    annotations: [
+                        {
+                            x: data.dates[data.dates.length - 1],
+                            y: data.pe_median,
+                            yaxis: 'y2',
+                            text: ` P/E Median (${data.pe_median.toFixed(1)}x)`,
+                            showarrow: false,
+                            xanchor: 'left',
+                            font: { color: '#f59e0b', size: 11 }
+                        },
+                        {
+                            x: data.dates[data.dates.length - 1],
+                            y: data.pfcf_median,
+                            yaxis: 'y2',
+                            text: ` P/FCF Median (${data.pfcf_median.toFixed(1)}x)`,
+                            showarrow: false,
+                            xanchor: 'left',
+                            font: { color: '#10b981', size: 11 }
+                        }
+                    ]
+                };
+
+                Plotly.newPlot('chart', [tracePrice, tracePE, tracePFCF], layout);
+            } catch (err) {
+                alert(err.message || "Could not retrieve data for this ticker.");
+            }
+        }
+
+        fetchAndPlot();
+    </script>
+</body>
+</html>
