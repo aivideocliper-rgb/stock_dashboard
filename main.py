@@ -2,7 +2,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import yfinance as yf
 import pandas as pd
-import numpy as np
 
 app = FastAPI()
 
@@ -19,52 +18,49 @@ def get_stock_data(ticker: str, period: str = "5y"):
     stock = yf.Ticker(formatted_ticker)
     
     hist = stock.history(period=period)
-    if hist.empty or len(hist) < 5:
+    if hist.empty or len(hist) < 10:
         raise HTTPException(status_code=404, detail="Ticker not found or insufficient history.")
         
     hist['Price'] = hist['Close']
     
+    q_inc = stock.quarterly_financials
     info = stock.info
-    trailing_eps = info.get("trailingEps")
     shares = info.get("sharesOutstanding")
-    market_cap = info.get("marketCap")
-    latest_price = hist['Price'].iloc[-1]
-    implied_shares = shares if (shares and shares > 0) else (market_cap / latest_price if market_cap and latest_price else 1e9)
 
-    cashflow_stmt = stock.quarterly_cashflow
-    if cashflow_stmt.empty:
-        cashflow_stmt = stock.cashflow
+    if q_inc.empty or not shares:
+        raise HTTPException(status_code=400, detail="Detailed quarterly financials unavailable for this ticker.")
 
-    annual_fcf = None
-    if not cashflow_stmt.empty:
-        for fcf_key in ['Free Cash Flow', 'Operating Cash Flow']:
-            if fcf_key in cashflow_stmt.index:
-                annual_fcf = cashflow_stmt.loc[fcf_key].iloc[0]
-                break
+    net_income = None
+    for key in ['Net Income', 'Net Income Common Stockholders', 'Net Income From Continuing Operation']:
+        if key in q_inc.index:
+            net_income = q_inc.loc[key]
+            break
 
-    fcf_per_share = (annual_fcf / implied_shares) if (annual_fcf and implied_shares) else (hist['Price'].mean() * 0.04)
-    eps_val = trailing_eps if (trailing_eps and trailing_eps > 0) else (hist['Price'].mean() * 0.05)
+    if net_income is None:
+        raise HTTPException(status_code=400, detail="Could not extract Net Income statements.")
 
-    pe_values = []
-    pfcf_values = []
+    ttm_df = pd.DataFrame({
+        'NetIncome_TTM': net_income.rolling(window=4, min_periods=4).sum()
+    }).dropna().sort_index()
 
-    for date, row in hist.iterrows():
-        p = row['Price']
-        pe_values.append(p / eps_val)
-        pfcf_values.append(p / fcf_per_share if fcf_per_share > 0 else (p / eps_val) * 1.2)
+    ttm_df['EPS_TTM'] = ttm_df['NetIncome_TTM'] / shares
 
-    hist['PE'] = pe_values
-    hist['PFCF'] = pfcf_values
-    hist = hist.dropna(subset=['Price', 'PE', 'PFCF'])
+    hist.index = pd.to_datetime(hist.index).tz_localize(None)
+    ttm_df.index = pd.to_datetime(ttm_df.index).tz_localize(None)
+    
+    combined = pd.merge_asof(hist.sort_index(), ttm_df.sort_index(), left_index=True, right_index=True, direction='backward')
+    combined = combined.dropna(subset=['Price', 'EPS_TTM'])
+    combined = combined[combined['EPS_TTM'] > 0]
 
-    pe_med = float(hist['PE'].median())
-    pfcf_med = float(hist['PFCF'].median())
+    if len(combined) < 10:
+        raise HTTPException(status_code=400, detail="Valid profitable historical data points are too sparse.")
+
+    combined['PE'] = combined['Price'] / combined['EPS_TTM']
+    pe_med = float(combined['PE'].median())
 
     return {
-        "dates": hist.index.strftime('%Y-%m-%d').tolist(),
-        "price": hist['Price'].tolist(),
-        "pe": hist['PE'].tolist(),
-        "pfcf": hist['PFCF'].tolist(),
-        "pe_median": pe_med,
-        "pfcf_median": pfcf_med
+        "dates": combined.index.strftime('%Y-%m-%d').tolist(),
+        "price": combined['Price'].tolist(),
+        "pe": combined['PE'].tolist(),
+        "pe_median": pe_med
     }
