@@ -44,7 +44,7 @@
             }
 
             try {
-                const response = await fetch(`https://stock-dashboard-api.onrender.com/api/stock/${ticker}?period=${period}`);
+                const response = await fetch(`https://stock-dashboard-api-v52m.onrender.com/api/stock/${ticker}?period=${period}`);
                 if (!response.ok) throw new Error("Ticker not found or backend error.");
                 
                 const data = await response.json();
